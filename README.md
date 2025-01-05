@@ -1,30 +1,29 @@
 # YashasTestTask
 Yasha's Test Task
+
+
+
 package main
 
 import (
 	"fmt"
 	"log"
 	"strconv"
-
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 var F = 0
 
-func main() {
-
+func main() 
+{
 	bot, err := tgbotapi.NewBotAPI("7956957657:AAGO4ha8ONjsAeWbQx8QP4qJj5uJq-qhp08")
 	if err != nil {
 		log.Panic(err)
 	}
-
 	bot.Debug = true
-
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
 	updates := bot.GetUpdatesChan(u)
-
 	for update := range updates {
 		if update.Message != nil {
 			if update.Message.IsCommand() {
@@ -38,24 +37,26 @@ func main() {
 	}
 }
 
-func handleCommands(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
+func handleCommands(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) 
+{
 	switch msg.Command() {
 	case "start":
 		sendWelcomeMessage(bot, msg.Chat.ID)
 	}
 }
 
-func sendWelcomeMessage(bot *tgbotapi.BotAPI, chatID int64) {
+func sendWelcomeMessage(bot *tgbotapi.BotAPI, chatID int64) 
+{
 	msg := tgbotapi.NewMessage(chatID, "Привет! Меня зовут GiftCardBot. Я умею покупать Gift Cards по серийному номеру или по стране, показывать актуальные карты на аккаунте и показать текущий баланс или задолженность.")
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("Использовать GiftCardBot", "request_use")))
 	msg.ReplyMarkup = keyboard
 	bot.Send(msg)
 }
 
-func handleTextMessages(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
+func handleTextMessages(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) 
+{
 	chatID := msg.Chat.ID
 	input := msg.Text
-
 	switch F {
 	case 1:
 		if len(input) != 6 {
@@ -124,7 +125,8 @@ func handleTextMessages(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
 	}
 }
 
-func handleCallbacks(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) {
+func handleCallbacks(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery)
+{
 	switch query.Data {
 	case "request_use":
 		MainMenu(bot, query.Message.Chat.ID)
@@ -141,7 +143,8 @@ func handleCallbacks(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) {
 	}
 }
 
-func MainMenu(bot *tgbotapi.BotAPI, chatID int64) {
+func MainMenu(bot *tgbotapi.BotAPI, chatID int64) 
+{
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("Мои Gift Cards по номеру", "list_by_number"),
@@ -156,30 +159,35 @@ func MainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 	bot.Send(msg)
 }
 
-func checkBalance(bot *tgbotapi.BotAPI, chatID int64) {
+func checkBalance(bot *tgbotapi.BotAPI, chatID int64) 
+{
 	msg := tgbotapi.NewMessage(chatID, "Ваша задолженность: 4000")
 	bot.Send(msg)
 }
 
-func listByNumber(bot *tgbotapi.BotAPI, chatID int64) {
+func listByNumber(bot *tgbotapi.BotAPI, chatID int64) 
+{
 	msg := tgbotapi.NewMessage(chatID, "Введите номер подарочной карты (Первые 6 цифр):")
 	bot.Send(msg)
 	F = 1
 }
 
-func listByCountry(bot *tgbotapi.BotAPI, chatID int64) {
+func listByCountry(bot *tgbotapi.BotAPI, chatID int64) 
+{
 	msg := tgbotapi.NewMessage(chatID, "Введите название подарочной карты (RU/CA/IL):")
 	bot.Send(msg)
 	F = 2
 }
 
-func buyByNumber(bot *tgbotapi.BotAPI, chatID int64) {
+func buyByNumber(bot *tgbotapi.BotAPI, chatID int64) 
+{
 	msg := tgbotapi.NewMessage(chatID, "Введите номер подарочной карты, которую жедаете приобрести (Первые 6 цифр):")
 	bot.Send(msg)
 	F = 3
 }
 
-func buyByCountry(bot *tgbotapi.BotAPI, chatID int64) {
+func buyByCountry(bot *tgbotapi.BotAPI, chatID int64) 
+{
 	msg := tgbotapi.NewMessage(chatID, "Введите название страны подарочной карты, которую жедаете приобрести (RU/CA/IL):")
 	bot.Send(msg)
 	F = 4
