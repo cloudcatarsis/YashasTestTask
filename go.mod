@@ -1,4 +1,4 @@
-module YashaTestTask
+module YashasTestTask
 
 go 1.23.4
 
