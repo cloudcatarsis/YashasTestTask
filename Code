@@ -47,9 +47,6 @@ func main() {
 	if err != nil {
 		log.Panic(err)
 	}
-	if err := db.Ping(); err != nil {
-    		log.Fatal(err)
-	}
 	userCommands := tgbotapi.NewSetMyCommands([]tgbotapi.BotCommand{
 		{Command: "menu", Description: "Использовать бота"},
 		{Command: "balance", Description: "Проверить баланс"}}...)
@@ -202,6 +199,28 @@ func handleCallbacks(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) {
 		changeBalance(bot, chatID, -1000., chosenUserID)
 	case "reset_balance":
 		changeBalance(bot, chatID, user.Balance, chosenUserID)
+
+	case "list_cards":
+		cards, err := getAllCards()
+		if err != nil {
+			log.Printf("Error getting all cards: %v", err)
+			bot.Send(tgbotapi.NewMessage(chatID, "Произошла ошибка при получении списка карт."))
+			return
+		}
+		users := getAllUsersFrimSQL(bot, chatID)
+		var messageText string
+		for _, card := range cards {
+			for _, user := range users {
+				if user.ID == card.UserID {
+					messageText += fmt.Sprintf("ID: %d, BIN: %d, Country: %s, Is Used: %v, User: %s\n",
+						card.ID, card.Bin, card.Country, card.IsUsed, user.FirstName)
+				}
+			}
+		}
+		if messageText == "" {
+			messageText = "Карт нет в базе данных."
+		}
+		bot.Send(tgbotapi.NewMessage(chatID, messageText))
 	}
 }
 func handleTextMessages(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
@@ -448,4 +467,21 @@ func requestAdminApproval(bot *tgbotapi.BotAPI, chatID int64, userID int64) {
 
 	userMsg := tgbotapi.NewMessage(chatID, "Ваш запрос на использование бота отправлен администратору. Ожидайте ответа.")
 	bot.Send(userMsg)
+}
+func getAllCards() ([]Card, error) {
+	rows, err := db.Query("SELECT id, bin, country, data, created_at, is_used, telegram_id FROM public.card")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cards []Card
+	for rows.Next() {
+		var card Card
+		if err := rows.Scan(&card.ID, &card.Bin, &card.Country, &card.Data, &card.CreatedAt, &card.IsUsed, &card.UserID); err != nil {
+			return nil, err
+		}
+		cards = append(cards, card)
+	}
+	return cards, nil
 }
