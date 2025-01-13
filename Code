@@ -47,6 +47,9 @@ func main() {
 	if err != nil {
 		log.Panic(err)
 	}
+	if err := db.Ping(); err != nil {
+    		log.Fatal(err)
+	}
 	userCommands := tgbotapi.NewSetMyCommands([]tgbotapi.BotCommand{
 		{Command: "menu", Description: "Использовать бота"},
 		{Command: "balance", Description: "Проверить баланс"}}...)
