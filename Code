@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -22,7 +23,7 @@ type User struct {
 }
 type Card struct {
 	ID        int64
-	Bin       int
+	Bin       int64
 	Country   string
 	Data      string
 	CreatedAt time.Time
@@ -33,8 +34,9 @@ type Card struct {
 var currentState = 0
 var limit = 0
 var chosenUserID int64 = 0
+var chosenCardID int64 = 0
 var country = ""
-var binNumber = 999999
+var binNumber int64
 var db *sql.DB
 
 func main() {
@@ -115,6 +117,14 @@ func handleCallbacks(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) {
 		chosenUserID, _ = strconv.ParseInt(strings.TrimPrefix(query.Data, "choose_user_"), 10, 64)
 		query.Data = "choose_user"
 	}
+	if strings.HasPrefix(query.Data, "choose_card") {
+		chosenCardID, _ = strconv.ParseInt(strings.TrimPrefix(query.Data, "choose_card_"), 10, 64)
+		query.Data = "choose_card"
+	}
+	if strings.HasPrefix(query.Data, "	user_id") {
+		chosenUserID, _ = strconv.ParseInt(strings.TrimPrefix(query.Data, "	user_id_"), 10, 64)
+		query.Data = "	user_id"
+	}
 
 	switch query.Data {
 	case "request_use":
@@ -123,12 +133,10 @@ func handleCallbacks(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) {
 		} else {
 			bot.Send(tgbotapi.NewMessage(chatID, "Ваш доступ к боту уже одобрен. Вы можете использовать бота."))
 		}
-
 	case "approve_user":
 		db.Exec("UPDATE public.user SET approved = true WHERE id = $1", userID)
 		bot.Send(tgbotapi.NewMessage(chatID, "Ваш доступ к боту одобрен!"))
 		MainMenu(bot, chatID)
-
 	case "deny_user":
 		bot.Send(tgbotapi.NewMessage(chatID, "Ваш доступ к боту отклонен"))
 	case "check_balance":
@@ -140,6 +148,7 @@ func handleCallbacks(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) {
 			return
 		}
 		defer rows.Close()
+
 		var cards []Card
 		for rows.Next() {
 			var card Card
@@ -150,11 +159,11 @@ func handleCallbacks(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) {
 		if len(cards) == 0 {
 			bot.Send(tgbotapi.NewMessage(chatID, "У вас нет карт."))
 		} else {
-			var messageText string
+			file, _ := os.Create("purchased_cards.txt")
 			for _, card := range cards {
-				messageText += fmt.Sprintf("ID: %d, BIN: %d, Country: %s,\n Data: %s\n\n", card.ID, card.Bin, card.Country, card.Data)
+				file.WriteString(fmt.Sprintf("Card Number: %s \n", card.Data))
 			}
-			bot.Send(tgbotapi.NewMessage(chatID, messageText))
+			bot.Send(tgbotapi.NewDocument(chatID, tgbotapi.FilePath("purchased_cards.txt")))
 		}
 	case "buy_by_number":
 		msg := tgbotapi.NewMessage(chatID, "Введите номер подарочных карт (6 цифр):")
@@ -199,7 +208,6 @@ func handleCallbacks(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) {
 		changeBalance(bot, chatID, -1000., chosenUserID)
 	case "reset_balance":
 		changeBalance(bot, chatID, user.Balance, chosenUserID)
-
 	case "list_cards":
 		cards, err := getAllCards()
 		if err != nil {
@@ -212,8 +220,8 @@ func handleCallbacks(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) {
 		for _, card := range cards {
 			for _, user := range users {
 				if user.ID == card.UserID {
-					messageText += fmt.Sprintf("ID: %d, BIN: %d, Country: %s, Is Used: %v, User: %s\n",
-						card.ID, card.Bin, card.Country, card.IsUsed, user.FirstName)
+					messageText += fmt.Sprintf("ID: %d, BIN: %d, Country: %s, Is Used: %v, User: %s\n Data: %s\n",
+						card.ID, card.Bin, card.Country, card.IsUsed, user.FirstName, card.Data)
 				}
 			}
 		}
@@ -221,6 +229,88 @@ func handleCallbacks(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) {
 			messageText = "Карт нет в базе данных."
 		}
 		bot.Send(tgbotapi.NewMessage(chatID, messageText))
+	case "update_card_status":
+		cards, err := getAllCards()
+		if err != nil {
+			log.Printf("Error getting all cards: %v", err)
+			bot.Send(tgbotapi.NewMessage(chatID, "Произошла ошибка при получении списка карт."))
+			return
+		}
+		users := getAllUsersFrimSQL(bot, chatID)
+		var buttons [][]tgbotapi.InlineKeyboardButton
+		for _, card := range cards {
+			for _, user := range users {
+				if user.ID == card.UserID {
+					cardButton := tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("ID: %d, User: %s, Is Used: %v \nData: %s\n", card.ID, user.FirstName, card.IsUsed, card.Data), fmt.Sprintf("choose_card_%d", card.ID))
+					buttons = append(buttons, []tgbotapi.InlineKeyboardButton{cardButton})
+				}
+
+			}
+		}
+
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(buttons...)
+		msg := tgbotapi.NewMessage(chatID, "Все пользователи:")
+		msg.ReplyMarkup = keyboard
+		bot.Send(msg)
+	case "choose_card":
+		selectedCard := getCardFromSql(chosenCardID)
+		var user User
+		db.QueryRow("SELECT id, telegram_id, first_name, balance, approved FROM public.user WHERE id = $1", selectedCard.UserID).Scan(&user.ID, &user.telegramID, &user.FirstName, &user.Balance, &user.Approved)
+
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("Поменять номер", "change_bin"),
+				tgbotapi.NewInlineKeyboardButtonData("Поменять страну", "change_country")),
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("Поменять владельца", "change_telegram_id"),
+				tgbotapi.NewInlineKeyboardButtonData("Поменять Data", "change_data")),
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("Удалить карту", "delete_card"),
+			))
+		msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("Выберете действие для карты:\nID: %d, Bin: %d, Country: %s, User: %s \nData: %s", selectedCard.ID, selectedCard.Bin, selectedCard.Country, user.FirstName, selectedCard.Data))
+		msg.ReplyMarkup = keyboard
+		bot.Send(msg)
+	case "change_bin":
+		msg := tgbotapi.NewMessage(chatID, "Введите новый BIN (6 цифр):")
+		bot.Send(msg)
+		currentState = 5
+	case "change_country":
+		msg := tgbotapi.NewMessage(chatID, "Введите новую страну (US|RU|CA):")
+		bot.Send(msg)
+		currentState = 6
+	case "change_telegram_id":
+		users := getAllUsersFrimSQL(bot, chatID)
+		var buttons [][]tgbotapi.InlineKeyboardButton
+		for _, user := range users {
+			userButton := tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("Name: %s", user.FirstName), fmt.Sprintf("user_id_%d", user.ID))
+			buttons = append(buttons, []tgbotapi.InlineKeyboardButton{userButton})
+		}
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(buttons...)
+		msg := tgbotapi.NewMessage(chatID, "Выбирете нового пользователя")
+		msg.ReplyMarkup = keyboard
+		bot.Send(msg)
+	case "user_id":
+		db.Exec("UPDATE public.card SET telegram_id = $1, is_used = false WHERE id = $2", chosenUserID, chosenCardID)
+		bot.Send(tgbotapi.NewMessage(chatID, "Пользователь обновлён на "))
+	case "change_data":
+		msg := tgbotapi.NewMessage(chatID, "Введите новую data :")
+		bot.Send(msg)
+		currentState = 7
+	case "delete_card":
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("Удалить", "delete_card_forever"),
+				tgbotapi.NewInlineKeyboardButtonData("Обратно", "update_card_status")),
+		)
+		msg := tgbotapi.NewMessage(chatID, "Точно хотите удалить?")
+		msg.ReplyMarkup = keyboard
+		bot.Send(msg)
+	case "delete_card_forever":
+		db.Exec("DELETE FROM public.card WHERE id = $1", chosenCardID)
+	case "add_new_card":
+		msg := tgbotapi.NewMessage(chatID, "Введите данные карты в формате: BIN|Country|Data (например, 123456|US|SomeData):")
+		bot.Send(msg)
+		currentState = 8
 	}
 }
 func handleTextMessages(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
@@ -230,15 +320,10 @@ func handleTextMessages(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
 	user := getUserFromSql(userID)
 	switch currentState {
 	case 1: // Buy GF by number
-		binNumber, err := strconv.Atoi(input)
-		if err != nil {
-			bot.Send(tgbotapi.NewMessage(chatID, "Номер должен состоять из цифр. Пожалуйста, введите ещё раз."))
+		binNumber, _ = strconv.ParseInt(input, 10, 64)
+		if len(input) != 6 {
+			bot.Send(tgbotapi.NewMessage(chatID, "Номер должен состоять из 6 цифр. Пожалуйста, введите ещё раз."))
 			return
-		} else {
-			if len(input) != 6 {
-				bot.Send(tgbotapi.NewMessage(chatID, "Номер должен состоять из 6 цифр. Пожалуйста, введите ещё раз."))
-				return
-			}
 		}
 		query := "SELECT id, bin, country, data, created_at, is_used, telegram_id FROM public.card WHERE bin = $1 AND is_used = false"
 		rows, err := db.Query(query, binNumber)
@@ -259,10 +344,9 @@ func handleTextMessages(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
 		if len(cards) == 0 {
 			bot.Send(tgbotapi.NewMessage(chatID, "Совпадений нет. Пожалуйста, введите номер ещё раз."))
 		} else {
-			bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Доступно %d gift cards с номером (%s). Сколько gift cards вы желаете приобрести?", len(cards), input)))
+			bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Доступно %d gift cards с номером (%d). Сколько gift cards вы желаете приобрести?", len(cards), binNumber)))
 			currentState = 3
 		}
-
 	case 2: // Buy GF by coutry
 		country = input
 		if len(country) != 2 {
@@ -297,7 +381,6 @@ func handleTextMessages(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
 			bot.Send(tgbotapi.NewMessage(chatID, "Пожалуйста, введите корректное количество карт (должно быть целым числом)."))
 			return
 		}
-
 		if numberOfCards <= 0 || numberOfCards > limit {
 			bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Пожалуйста, введите количество карт от 1 до %d", limit)))
 			return
@@ -309,7 +392,7 @@ func handleTextMessages(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
 
 		rows, err := db.Query("SELECT id, bin, country, data, created_at, is_used, telegram_id FROM public.card WHERE bin = $1 AND is_used = false", binNumber)
 		if err != nil {
-			bot.Send(tgbotapi.NewMessage(chatID, "Error getting cards by number"))
+			bot.Send(tgbotapi.NewMessage(chatID, "Error getting cards by country"))
 			return
 		}
 		defer rows.Close()
@@ -322,8 +405,9 @@ func handleTextMessages(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
 			cards = append(cards, card)
 			count++
 		}
-
+		file, _ := os.Create("purchased_cards.txt")
 		for _, card := range cards {
+			file.WriteString(fmt.Sprintf("Card Number: %s \n", card.Data))
 			_, err := db.Exec("UPDATE public.card SET telegram_id = $1, is_used = true WHERE id = $2", user.ID, card.ID)
 			if err != nil {
 				log.Printf("Error updating card: %v", err)
@@ -333,11 +417,8 @@ func handleTextMessages(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
 		newBalance := user.Balance - float64(numberOfCards)
 		db.Exec("UPDATE public.user SET balance = $1 WHERE telegram_id = $2", newBalance, userID)
 
-		var messageText string
-		for _, card := range cards {
-			messageText += fmt.Sprintf("ID: %d, BIN: %d, Country: %s\n\n", card.ID, card.Bin, card.Country)
-		}
-		bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Вы купили %d карт. Новый баланс: %.2f\n Список купленных карт:\n%s", numberOfCards, newBalance, messageText)))
+		bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Вы купили %d карт. Новый баланс: %.2f\n ", binNumber, newBalance)))
+		bot.Send(tgbotapi.NewDocument(chatID, tgbotapi.FilePath("purchased_cards.txt")))
 		limit = 0
 		binNumber = 0
 	case 4:
@@ -371,8 +452,9 @@ func handleTextMessages(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
 			cards = append(cards, card)
 			count++
 		}
-
+		file, _ := os.Create("purchased_cards.txt")
 		for _, card := range cards {
+			file.WriteString(fmt.Sprintf("Card Number: %s \n", card.Data))
 			_, err := db.Exec("UPDATE public.card SET telegram_id = $1, is_used = true WHERE id = $2", user.ID, card.ID)
 			if err != nil {
 				log.Printf("Error updating card: %v", err)
@@ -381,20 +463,38 @@ func handleTextMessages(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
 		}
 		newBalance := user.Balance - float64(numberOfCards)
 		db.Exec("UPDATE public.user SET balance = $1 WHERE telegram_id = $2", newBalance, userID)
-
-		var messageText string
-		for _, card := range cards {
-			messageText += fmt.Sprintf("ID: %d, BIN: %d, Country: %s\n\n", card.ID, card.Bin, card.Country)
-		}
-		bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Вы купили %d карт. Новый баланс: %.2f\nСписок ваших карт:\n%s", numberOfCards, newBalance, messageText)))
+		bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Вы купили %d карт. Новый баланс: %.2f\n ", numberOfCards, newBalance)))
+		bot.Send(tgbotapi.NewDocument(chatID, tgbotapi.FilePath("purchased_cards.txt")))
 		limit = 0
 		country = ""
+	case 5:
+		binNumber, _ = strconv.ParseInt(input, 10, 64)
+		if len(input) != 6 {
+			bot.Send(tgbotapi.NewMessage(chatID, "Номер должен состоять из 6 цифр. Пожалуйста, введите ещё раз."))
+			return
+		}
+		db.Exec("UPDATE public.card SET bin = $1 WHERE id = $2", binNumber, chosenCardID)
+		bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Номер bin обновлён на %d", binNumber)))
+	case 6:
+		country = input
+		if len(input) != 2 {
+			bot.Send(tgbotapi.NewMessage(chatID, "Введите название страны двумя буквами ( RU )."))
+			return
+		}
+		db.Exec("UPDATE public.card SET country = $1 WHERE id = $2", country, chosenCardID)
+		bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Страна обновлена на %s", country)))
+	case 7:
+		data := input
+		db.Exec("UPDATE public.card SET data = $1 WHERE id = $2", data, chosenCardID)
+		bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Data обновлена на %s", input)))
+		currentState = 0
+	case 8:
+		buyCard(bot, chatID, input)
 	default:
 		bot.Send(tgbotapi.NewMessage(chatID, "Я не умею свободно читать сообщения, нажми на одну из кнопок и я смогу тебя понять ;)"))
 		MainMenu(bot, chatID)
 	}
 }
-
 func adminPanel(bot *tgbotapi.BotAPI, chatID int64) {
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
@@ -402,14 +502,13 @@ func adminPanel(bot *tgbotapi.BotAPI, chatID int64) {
 			tgbotapi.NewInlineKeyboardButtonData("Модерация задолженностей", "moderate_users")),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("Все карты", "list_cards"),
-			tgbotapi.NewInlineKeyboardButtonData("Модерация статусов карты", "update_card_status")),
+			tgbotapi.NewInlineKeyboardButtonData("Модерация статусов карт", "update_card_status")),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("Добавить новую карту", "add_new_card")))
 	msg := tgbotapi.NewMessage(chatID, "Панель модератора!")
 	msg.ReplyMarkup = keyboard
 	bot.Send(msg)
 }
-
 func MainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
@@ -422,7 +521,6 @@ func MainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 	msg.ReplyMarkup = keyboard
 	bot.Send(msg)
 }
-
 func getUserFromSql(telegramID int64) User {
 	var user User
 	db.QueryRow("SELECT id, telegram_id, first_name, balance, approved FROM public.user WHERE telegram_id = $1", telegramID).Scan(&user.ID, &user.telegramID, &user.FirstName, &user.Balance, &user.Approved)
@@ -484,4 +582,38 @@ func getAllCards() ([]Card, error) {
 		cards = append(cards, card)
 	}
 	return cards, nil
+}
+func getCardFromSql(cardID int64) Card {
+	var card Card
+	db.QueryRow("SELECT id, bin, country, data, created_at, is_used, telegram_id FROM public.card WHERE id = $1", cardID).Scan(&card.ID, &card.Bin, &card.Country, &card.Data, &card.CreatedAt, &card.IsUsed, &card.UserID)
+	return card
+}
+func buyCard(bot *tgbotapi.BotAPI, chatID int64, input string) {
+	parts := strings.Split(input, "|")
+	if len(parts) != 3 {
+		bot.Send(tgbotapi.NewMessage(chatID, "Неверный формат ввода. Введите данные в формате: BIN|Country|Data"))
+		return
+	}
+
+	bin, err := strconv.Atoi(parts[0])
+	if err != nil {
+		bot.Send(tgbotapi.NewMessage(chatID, "BIN должен быть числом. Попробуйте снова."))
+		return
+	}
+
+	country := parts[1]
+	data := parts[2]
+	cardID, err := addCardToSQL(bin, country, data)
+	if err != nil {
+		bot.Send(tgbotapi.NewMessage(chatID, "Error adding new card"))
+		log.Printf("Error adding new card"+": %v", err)
+		return
+	}
+	bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Новая карта добавлена. ID: %d", cardID)))
+	currentState = 0
+}
+func addCardToSQL(bin int, country string, data string) (int64, error) {
+	var cardID int64
+	err := db.QueryRow("INSERT INTO public.card (bin, country, data, telegram_id) VALUES ($1, $2, $3, 1) RETURNING id", bin, country, data).Scan(&cardID)
+	return cardID, err
 }
